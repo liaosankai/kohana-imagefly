@@ -121,8 +121,8 @@ class ImageFly
         if ($this->config['mimic_source_dir'])
         {
             // Get the dir from the source file
-            $mimic_dir = $this->config['cache_dir'].pathinfo($this->source_file, PATHINFO_DIRNAME);
-            
+			$source_file = str_replace($this->config['cache_dir'],"",$this->source_file);
+            $mimic_dir = $this->config['cache_dir'] . pathinfo($source_file, PATHINFO_DIRNAME);
             // Try to create if it does not exist
             if( ! file_exists($mimic_dir))
             {
@@ -137,7 +137,7 @@ class ImageFly
             }
             
             // Set the cache dir, with trailling slash
-            $this->cache_dir = $mimic_dir.'/';
+            $this->cache_dir = $mimic_dir . DIRECTORY_SEPARATOR;
         }
     }
     
@@ -149,18 +149,54 @@ class ImageFly
         // Get values from request
         $params = Request::current()->param('params');
         $filepath = Request::current()->param('imagepath');
-        
+        $query = Request::current()->query();
+		
         // If enforcing params, ensure it's a match
         if ($this->config['enforce_presets'] AND ! in_array($params, $this->config['presets']))
             throw new HTTP_Exception_404('The requested URL :uri was not found on this server.',
                                                     array(':uri' => Request::$current->uri()));
-       
-        if($this->config['charset'] != '') {
-            $filepath = iconv("UTF-8", "{$this->config['charset']}//IGNORE", $filepath);
-        }
-        
+
+		// Support non-ASCII path
+		if($this->config['charset'] != '') {
+		   $filepath = iconv("UTF-8", "{$this->config['charset']}//IGNORE", $filepath);
+		}
+													
+		// 修復 http:// 被轉成 http:/ 的問題												
+		$filepath = str_replace(':/', '://', $filepath);
+		
+		// 分析檔案路徑是否以 http 或 https 開頭
+		$parse_url = parse_url($filepath);
+        if (isset($parse_url["scheme"]) && in_array($parse_url["scheme"], array("http", "https")))
+        {
+			// 重構完整的 URL 路徑
+			$parse_url["query"] = http_build_query($query);
+			$filepath = http_build_url($parse_url); 
+			// 建立暫存圖檔
+			$tempdir = $this->config['cache_dir']. $parse_url["host"] . DIRECTORY_SEPARATOR;
+			if(!is_dir($tempdir)){
+				mkdir($tempdir, 0755, TRUE);
+			}
+			$tempfile = $tempdir . md5($filepath);
+			// 檢查暫存圖檔是否已存在
+			if(!file_exists($tempfile)){
+				$ch = curl_init($filepath);
+				$fp = fopen($tempfile, 'wb');
+				curl_setopt($ch, CURLOPT_FILE, $fp);
+				curl_setopt($ch, CURLOPT_HEADER, 0);
+				curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+				curl_exec($ch);
+				curl_close($ch);
+				fclose($fp);
+			}
+			// 判斷檔案類型後附告副檔名
+			//$ext = File::ext_by_mime(Arr::get(getimagesize($tempfile),"mime"));
+			//$newname = $tempfile.".{$ext}";
+			//rename( $tempfile , $newname );
+			//$filepath = $newname;
+			$filepath = $tempfile;
+		}
         $this->image = Image::factory($filepath);
-        
+		
         // The parameters are separated by hyphens
         $raw_params = explode('-', $params);
         
@@ -250,7 +286,8 @@ class ImageFly
      */
     private function _encoded_filename()
     {
-        $ext = strtolower(pathinfo($this->source_file, PATHINFO_EXTENSION));
+        //$ext = strtolower(pathinfo($this->source_file, PATHINFO_EXTENSION));
+		$ext = File::ext_by_mime(Arr::get(getimagesize($this->source_file),"mime"));
         $encode = md5($this->source_file.http_build_query($this->url_params));
 
         // Build the parts of the filename
