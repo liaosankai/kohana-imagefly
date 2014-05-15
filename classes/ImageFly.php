@@ -265,7 +265,7 @@ class ImageFly {
 
         // 這邊取得可能是 jpe，但對 Image 會判斷不支援這種類型(這是 bug，已回報官方 #4836)
         // 但避免官方不更新，所以這邊自己先做個轉換
-        $ext = ($ext == 'jpe') ? 'jpg' : 'jpg';
+        $ext = ($ext == 'jpe') ? 'jpg' : $ext;
 
         $encode = md5($this->source_file . http_build_query($this->url_params));
 
